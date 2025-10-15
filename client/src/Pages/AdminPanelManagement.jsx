@@ -5,6 +5,8 @@ import {
   getAllPanels,
   getAllPanelProjects,
   getAllGuideProjects,
+  getAllProjects,
+  getMarkingSchema,
   createPanelManual,
   deletePanel,
   assignPanelToProject,
@@ -36,8 +38,168 @@ import {
   BarChart3,
   RefreshCw,
   Download,
-  MapPin, // ✅ Add this import
+  MapPin,
+  ClipboardCheck,
+  ClipboardX,
 } from "lucide-react";
+
+const normalizeReviewCollection = (reviews) => {
+  if (!reviews) return {};
+  if (reviews instanceof Map) {
+    return Object.fromEntries(reviews);
+  }
+  if (typeof reviews === "object") {
+    return { ...reviews };
+  }
+  return {};
+};
+
+const normalizeMarksCollection = (marks) => {
+  if (!marks) return {};
+  if (marks instanceof Map) {
+    return Object.fromEntries(marks);
+  }
+  if (typeof marks === "object") {
+    return { ...marks };
+  }
+  return {};
+};
+
+const reviewHasMeaningfulData = (review) => {
+  if (!review || typeof review !== "object") return false;
+
+  if (review.locked) return true;
+
+  const attendanceValue = review.attendance?.value;
+  if (attendanceValue === true) return true;
+
+  if (review.comments && review.comments.trim().length > 0) return true;
+
+  const marks = normalizeMarksCollection(review.marks);
+  for (const value of Object.values(marks)) {
+    if (value === "PAT") return true;
+    if (typeof value === "number" && !Number.isNaN(value) && value !== 0) {
+      return true;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      const numeric = Number(trimmed);
+      if (!Number.isNaN(numeric) && numeric !== 0) return true;
+      if (trimmed.toUpperCase() === "PAT") return true;
+    }
+  }
+
+  return false;
+};
+
+const resolveSchoolDepartment = (project, panel) => {
+  const school = project?.school || (Array.isArray(panel?.school) ? panel.school[0] : panel?.school);
+  const department = project?.department || (Array.isArray(panel?.department) ? panel.department[0] : panel?.department);
+  if (!school || !department) {
+    return [null, null];
+  }
+  return [school, department];
+};
+
+const schemaKeyFor = (school, department) => {
+  if (!school || !department) return null;
+  return `${school}|||${department}`;
+};
+
+const computeProjectMarkInfo = (project, panel, schemaCache) => {
+  const baseSummary = {
+    reviewNames: [],
+    totalStudents: Array.isArray(project?.students) ? project.students.length : 0,
+    studentsWithAnyMarks: 0,
+    studentsFullyMarked: 0,
+    hasAnyMarked: false,
+    isFullyMarked: false,
+    status: "none",
+  };
+
+  if (!project || !Array.isArray(project.students) || project.students.length === 0) {
+    return baseSummary;
+  }
+
+  const [school, department] = resolveSchoolDepartment(project, panel);
+  const key = schemaKeyFor(school, department);
+  const schema = key ? schemaCache.get(key) : null;
+  const panelReviews = (schema?.reviews || []).filter((review) => review.facultyType === "panel");
+
+  if (!schema || panelReviews.length === 0) {
+    return {
+      ...baseSummary,
+      status: "no-schema",
+    };
+  }
+
+  const reviewNames = panelReviews.map((review) => review.reviewName);
+  let studentsWithAnyMarks = 0;
+  let studentsFullyMarked = 0;
+
+  project.students.forEach((student) => {
+    const reviews = normalizeReviewCollection(student.reviews);
+
+    const hasAny = reviewNames.some((reviewName) => reviewHasMeaningfulData(reviews[reviewName]));
+    const isComplete = reviewNames.every((reviewName) => reviewHasMeaningfulData(reviews[reviewName]));
+
+    if (hasAny) studentsWithAnyMarks += 1;
+    if (isComplete) studentsFullyMarked += 1;
+  });
+
+  const totalStudents = project.students.length;
+  const isFullyMarked = totalStudents > 0 && studentsFullyMarked === totalStudents;
+  const hasAnyMarked = studentsWithAnyMarks > 0;
+
+  return {
+    reviewNames,
+    totalStudents,
+    studentsWithAnyMarks,
+    studentsFullyMarked,
+    hasAnyMarked,
+    isFullyMarked,
+    status: isFullyMarked ? "full" : hasAnyMarked ? "partial" : "none",
+  };
+};
+
+const computePanelMarkSummary = (panel, schemaCache) => {
+  const enrichedTeams = panel.teams.map((team) => {
+    const markStatus = computeProjectMarkInfo(team.full, panel, schemaCache);
+    return {
+      ...team,
+      markStatus,
+    };
+  });
+
+  const totalProjects = enrichedTeams.length;
+  const fullyMarkedProjects = enrichedTeams.filter((team) => team.markStatus.isFullyMarked).length;
+  const projectsWithAnyMarks = enrichedTeams.filter((team) => team.markStatus.hasAnyMarked).length;
+  const partialProjects = Math.max(projectsWithAnyMarks - fullyMarkedProjects, 0);
+  const unmarkedProjects = Math.max(totalProjects - projectsWithAnyMarks, 0);
+
+  let status = "none";
+  if (totalProjects === 0) {
+    status = "no-projects";
+  } else if (fullyMarkedProjects === totalProjects) {
+    status = "all";
+  } else if (projectsWithAnyMarks === 0) {
+    status = "none";
+  } else {
+    status = "partial";
+  }
+
+  return {
+    teams: enrichedTeams,
+    summary: {
+      totalProjects,
+      fullyMarkedProjects,
+      partialProjects,
+      unmarkedProjects,
+      status,
+    },
+  };
+};
 
 const AdminPanelManagement = () => {
   const navigate = useNavigate();
@@ -72,6 +234,7 @@ const AdminPanelManagement = () => {
   const [adminContext, setAdminContext] = useState(null);
   const [isAutoAssigning, setIsAutoAssigning] = useState(false);
   const [isAutoCreating, setIsAutoCreating] = useState(false);
+  const [panelMarkFilter, setPanelMarkFilter] = useState("");
 
   // Show notification function
   const showNotification = useCallback((type, title, message, duration = 4000) => {
@@ -104,10 +267,15 @@ const AdminPanelManagement = () => {
       const apiSchool = skipped ? null : school;
       const apiDepartment = skipped ? null : department;
 
-      const [panelRes, panelProjectsRes, guideProjectsRes] = await Promise.all([
+      const projectParams = new URLSearchParams();
+      if (apiSchool) projectParams.append("school", apiSchool);
+      if (apiDepartment) projectParams.append("department", apiDepartment);
+
+      const [panelRes, panelProjectsRes, guideProjectsRes, projectRes] = await Promise.all([
         getAllPanels(apiSchool, apiDepartment),
         getAllPanelProjects(apiSchool, apiDepartment),
         getAllGuideProjects(apiSchool, apiDepartment),
+        getAllProjects(projectParams),
       ]);
 
       // Process panels data
@@ -130,22 +298,32 @@ const AdminPanelManagement = () => {
         panelProjectData = panelProjectsRes.data;
       }
 
+      const detailedProjects = projectRes?.data?.data || [];
+      const detailedProjectsMap = new Map(
+        detailedProjects.map((project) => [project._id?.toString?.() || String(project._id), project])
+      );
+
       // Create panel teams map
       const panelTeamsMap = new Map();
       panelProjectData.forEach((p) => {
-        const teams = (p.projects || []).map((project) => ({
-          id: project._id,
-          name: project.name,
-          domain: project.domain || "N/A",
-          members: (project.students || []).map((s) => s.name || s.regNo),
-          full: project,
-        }));
+        const teams = (p.projects || []).map((project) => {
+          const projectId = project._id?.toString?.() || String(project._id);
+          const detailedProject = detailedProjectsMap.get(projectId) || project;
+
+          return {
+            id: projectId,
+            name: project.name,
+            domain: project.domain || project.specialization || "N/A",
+            members: (project.students || []).map((s) => s.name || s.regNo),
+            full: detailedProject,
+          };
+        });
         panelTeamsMap.set(p.panelId, teams);
       });
 
       // ✅ ENHANCED: Format panels with faculty employee IDs directly from API response
       // ✅ ENHANCED: Format panels with faculty employee IDs directly from API response
-const formattedPanels = allPanelsData.map((panel) => ({
+      const formattedPanels = allPanelsData.map((panel) => ({
   panelId: panel._id,
   facultyIds: (panel.members || []).map(m => m._id).filter(Boolean),
   facultyNames: (panel.members || []).map(m => m.name).filter(Boolean),
@@ -158,7 +336,44 @@ const formattedPanels = allPanelsData.map((panel) => ({
 
 
       console.log('✅ Formatted panels with employee IDs:', formattedPanels);
-      setPanels(formattedPanels);
+
+      const schemaKeys = new Set();
+      formattedPanels.forEach((panel) => {
+        (panel.teams || []).forEach((team) => {
+          const [teamSchool, teamDepartment] = resolveSchoolDepartment(team.full, panel);
+          const key = schemaKeyFor(teamSchool, teamDepartment);
+          if (key) {
+            schemaKeys.add(key);
+          }
+        });
+      });
+
+      const schemaEntries = await Promise.all(
+        Array.from(schemaKeys).map(async (key) => {
+          const [schemaSchool, schemaDepartment] = key.split("|||");
+          try {
+            const schemaResponse = await getMarkingSchema(schemaSchool, schemaDepartment);
+            const schemaData = schemaResponse?.schema || schemaResponse?.data?.schema || null;
+            return [key, schemaData];
+          } catch (schemaError) {
+            console.error(`Error fetching marking schema for ${schemaSchool}-${schemaDepartment}:`, schemaError);
+            return [key, null];
+          }
+        })
+      );
+
+      const schemaCache = new Map(schemaEntries);
+
+      const panelsWithMarkStatus = formattedPanels.map((panel) => {
+        const { teams: enrichedTeams, summary } = computePanelMarkSummary(panel, schemaCache);
+        return {
+          ...panel,
+          teams: enrichedTeams,
+          markSummary: summary,
+        };
+      });
+
+      setPanels(panelsWithMarkStatus);
 
       // Process guide projects
       let guideProjectData = [];
@@ -499,9 +714,9 @@ const formattedPanels = allPanelsData.map((panel) => ({
     setShowAutoAssignModal(true);
   }, [isAutoCreating, showNotification]);
 
-  const handleManualAssign = useCallback(async (panelIndex, projectId) => {
+  const handleManualAssign = useCallback(async (panelId, projectId) => {
     try {
-      const panel = panels[panelIndex];
+      const panel = panels.find((entry) => entry.panelId === panelId);
       if (!panel) return;
 
       const conflictCheck = canAssignProjectToPanel(projectId, panel.facultyIds);
@@ -543,6 +758,60 @@ const formattedPanels = allPanelsData.map((panel) => ({
     str.toLowerCase().includes(searchQuery.toLowerCase()),
     [searchQuery]
   );
+
+  const filteredPanels = useMemo(() => {
+    return panels.filter((panel) => {
+      const matchesSearch =
+        !searchQuery ||
+        panel.facultyNames.some((name) => filterMatches(name)) ||
+        panel.teams.some((team) =>
+          filterMatches(team.name) ||
+          filterMatches(team.domain) ||
+          filterMatches(team.full?.school) ||
+          filterMatches(team.full?.department) ||
+          filterMatches(team.full?.specialization)
+        ) ||
+        (panel.venue && filterMatches(panel.venue)) ||
+        filterMatches(panel.school) ||
+        filterMatches(panel.department);
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (!panelMarkFilter) {
+        return true;
+      }
+
+      const status = panel.markSummary?.status || "unknown";
+      switch (panelMarkFilter) {
+        case "all":
+          return status === "all";
+        case "partial":
+          return status === "partial";
+        case "none":
+          return status === "none";
+        case "no-projects":
+          return status === "no-projects";
+        default:
+          return true;
+      }
+    });
+  }, [panels, searchQuery, filterMatches, panelMarkFilter]);
+
+  const markStatusCounts = useMemo(() => {
+    return panels.reduce(
+      (acc, panel) => {
+        const status = panel.markSummary?.status || "unknown";
+        if (status === "all") acc.all += 1;
+        else if (status === "partial") acc.partial += 1;
+        else if (status === "none") acc.none += 1;
+        else if (status === "no-projects") acc.noProjects += 1;
+        return acc;
+      },
+      { all: 0, partial: 0, none: 0, noProjects: 0 }
+    );
+  }, [panels]);
 
   if (loading) {
     return (
@@ -606,7 +875,7 @@ const formattedPanels = allPanelsData.map((panel) => ({
 
         {/* ✅ Statistics using extracted component */}
         <div className="mx-4 sm:mx-6 md:mx-8 mb-8">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 sm:gap-6">
             <PanelStatsCard
               icon={Users}
               title="Total Faculty"
@@ -633,6 +902,20 @@ const formattedPanels = allPanelsData.map((panel) => ({
               title="Unassigned Teams"
               value={unassignedTeams.length}
               bgColor="bg-gradient-to-br from-orange-500 to-orange-600"
+              iconBg="bg-white/20"
+            />
+            <PanelStatsCard
+              icon={ClipboardCheck}
+              title="Fully Marked Panels"
+              value={markStatusCounts.all}
+              bgColor="bg-gradient-to-br from-teal-500 to-teal-600"
+              iconBg="bg-white/20"
+            />
+            <PanelStatsCard
+              icon={ClipboardX}
+              title="Pending Panel Marks"
+              value={markStatusCounts.partial + markStatusCounts.none}
+              bgColor="bg-gradient-to-br from-rose-500 to-rose-600"
               iconBg="bg-white/20"
             />
           </div>
@@ -680,6 +963,38 @@ const formattedPanels = allPanelsData.map((panel) => ({
                   <X className="h-4 w-4 sm:h-5 sm:w-5 text-slate-400 hover:text-slate-600 transition-colors" />
                 </button>
               )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <div>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2">
+                  Panel Mark Status
+                </label>
+                <select
+                  value={panelMarkFilter}
+                  onChange={(e) => setPanelMarkFilter(e.target.value)}
+                  className="w-full p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all text-sm sm:text-base"
+                >
+                  <option value="">All Panels</option>
+                  <option value="all">✅ Fully Marked</option>
+                  <option value="partial">⚠️ Partially Marked</option>
+                  <option value="none">🚫 No Marks Recorded</option>
+                  <option value="no-projects">📂 No Projects Assigned</option>
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button
+                  onClick={() => setPanelMarkFilter("")}
+                  disabled={!panelMarkFilter}
+                  className={`w-full sm:w-auto px-4 py-2 rounded-xl font-semibold text-sm sm:text-base transition-all ${
+                    panelMarkFilter
+                      ? "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                      : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  }`}
+                >
+                  Clear Mark Filter
+                </button>
+              </div>
             </div>
 
             {/* Panel Creation Controls */}
@@ -783,43 +1098,37 @@ const formattedPanels = allPanelsData.map((panel) => ({
                     <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
                   </div>
                   <h2 className="text-xl sm:text-2xl font-bold text-slate-800">
-                    Panel Records ({panels.length.toLocaleString()})
+                    Panel Records ({filteredPanels.length.toLocaleString()} / {panels.length.toLocaleString()})
                   </h2>
                 </div>
+                {filteredPanels.length === 0 ? (
+                  <div className="bg-slate-100 border border-slate-200 rounded-xl p-6 text-center">
+                    <p className="text-slate-600 font-medium">No panels match the current search or mark filter.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredPanels.map((panel, idx) => {
+                      const availableTeamsForPanel = getAvailableTeamsForPanel(panel.facultyIds);
+                      const isExpanded = expandedPanel === panel.panelId;
 
-                <div className="space-y-4">
-                  {panels.map((panel, idx) => {
-                    const shouldShow =
-  !searchQuery ||
-  panel.facultyNames.some((name) => filterMatches(name)) ||
-  panel.teams.some(
-    (team) => filterMatches(team.name) || filterMatches(team.domain)
-  ) ||
-  (panel.venue && filterMatches(panel.venue)); // ✅ Include venue in search
-
-
-                    if (!shouldShow) return null;
-
-                    const availableTeamsForPanel = getAvailableTeamsForPanel(panel.facultyIds);
-                    const isExpanded = expandedPanel === idx;
-
-                    return (
-                      <PanelCard
-                        key={panel.panelId}
-                        panel={panel}
-                        index={idx}
-                        isExpanded={isExpanded}
-                        onToggleExpand={() => setExpandedPanel(expandedPanel === idx ? null : idx)}
-                        onRemovePanel={(panelId) => setConfirmRemove({ type: "panel", panelId })}
-                        availableTeams={availableTeamsForPanel}
-                        onManualAssign={handleManualAssign}
-                        unassignedTeams={unassignedTeams}
-                        allGuideProjects={allGuideProjects}
-                        onRemoveTeam={(teamId) => setConfirmRemove({ type: "team", teamId })}
-                      />
-                    );
-                  })}
-                </div>
+                      return (
+                        <PanelCard
+                          key={panel.panelId}
+                          panel={panel}
+                          index={idx}
+                          isExpanded={isExpanded}
+                          onToggleExpand={() => setExpandedPanel(expandedPanel === panel.panelId ? null : panel.panelId)}
+                          onRemovePanel={(panelId) => setConfirmRemove({ type: "panel", panelId })}
+                          availableTeams={availableTeamsForPanel}
+                          onManualAssign={handleManualAssign}
+                          unassignedTeams={unassignedTeams}
+                          allGuideProjects={allGuideProjects}
+                          onRemoveTeam={(teamId) => setConfirmRemove({ type: "team", teamId })}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

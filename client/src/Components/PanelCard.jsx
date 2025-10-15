@@ -1,5 +1,16 @@
-import React from 'react';
-import { ChevronRight, ChevronDown, Users, Building2, Trash2, MapPin, BookOpen } from 'lucide-react';
+import {
+  ChevronRight,
+  ChevronDown,
+  Users,
+  Building2,
+  Trash2,
+  MapPin,
+  BookOpen,
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
+  ClipboardList,
+} from 'lucide-react';
 
 const PanelCard = ({ 
   panel, 
@@ -16,6 +27,55 @@ const PanelCard = ({
   // ✅ FIXED: Handle array fields from new schema
   const displaySchool = Array.isArray(panel.school) ? panel.school.join(', ') : (panel.school || 'Unknown');
   const displayDepartment = Array.isArray(panel.department) ? panel.department.join(', ') : (panel.department || 'Unknown');
+
+  const panelStatusConfig = {
+    all: {
+      label: 'Fully Marked',
+      className: 'bg-emerald-100 text-emerald-700',
+      icon: CheckCircle,
+    },
+    partial: {
+      label: 'Partially Marked',
+      className: 'bg-amber-100 text-amber-700',
+      icon: AlertTriangle,
+    },
+    none: {
+      label: 'No Marks',
+      className: 'bg-rose-100 text-rose-700',
+      icon: XCircle,
+    },
+    'no-projects': {
+      label: 'No Projects',
+      className: 'bg-slate-100 text-slate-600',
+      icon: ClipboardList,
+    },
+  };
+
+  const panelStatus = panel.markSummary?.status || 'unknown';
+  const panelStatusMeta = panelStatusConfig[panelStatus];
+
+  const teamStatusConfig = {
+    full: {
+      label: 'Fully Marked',
+      className: 'bg-emerald-100 text-emerald-700',
+      icon: CheckCircle,
+    },
+    partial: {
+      label: 'Partially Marked',
+      className: 'bg-amber-100 text-amber-700',
+      icon: AlertTriangle,
+    },
+    none: {
+      label: 'No Marks',
+      className: 'bg-rose-100 text-rose-700',
+      icon: XCircle,
+    },
+    'no-schema': {
+      label: 'Schema Missing',
+      className: 'bg-slate-100 text-slate-600',
+      icon: AlertTriangle,
+    },
+  };
 
   return (
     <div className="border border-slate-200 rounded-xl bg-gradient-to-r from-white to-slate-50 hover:shadow-lg transition-all duration-300">
@@ -72,6 +132,17 @@ const PanelCard = ({
         </div>
         
         <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
+            {panelStatusMeta && (
+              <span className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-semibold ${panelStatusMeta.className}`}>
+                <panelStatusMeta.icon className="w-3 h-3 sm:w-4 sm:h-4" />
+                <span>{panelStatusMeta.label}</span>
+                {panel.markSummary && (
+                  <span className="text-[10px] sm:text-xs font-medium">
+                    {panel.markSummary.fullyMarkedProjects || 0}/{panel.markSummary.totalProjects || 0}
+                  </span>
+                )}
+              </span>
+            )}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -136,6 +207,23 @@ const PanelCard = ({
                 ))}
               </div>
             </div>
+
+            {panel.markSummary && panel.markSummary.totalProjects > 0 && (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                <div className="bg-emerald-50 text-emerald-700 rounded-lg px-3 py-2 font-medium flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Fully Marked: {panel.markSummary.fullyMarkedProjects}</span>
+                </div>
+                <div className="bg-amber-50 text-amber-700 rounded-lg px-3 py-2 font-medium flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>Partial: {panel.markSummary.partialProjects}</span>
+                </div>
+                <div className="bg-rose-50 text-rose-700 rounded-lg px-3 py-2 font-medium flex items-center gap-2">
+                  <XCircle className="w-4 h-4" />
+                  <span>Unmarked: {panel.markSummary.unmarkedProjects}</span>
+                </div>
+              </div>
+            )}
           </div>
           
           {/* Assigned Teams Section */}
@@ -157,77 +245,96 @@ const PanelCard = ({
               </div>
             ) : (
               <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
-                {panel.teams.map((team) => (
-                  <div key={team.id} className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="flex-1 min-w-0">
-                        <h6 className="font-bold text-base sm:text-lg text-slate-800 mb-1">{team.name}</h6>
-                        {/* ✅ FIXED: Display project domain/type if available */}
-                        {team.full && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {team.full.domain && (
-                              <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
-                                {team.full.domain}
-                              </span>
-                            )}
-                            {team.full.type && (
-                              <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full text-xs font-medium">
-                                {team.full.type}
-                              </span>
-                            )}
-                            {team.full.school && (
-                              <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
-                                {team.full.school}
-                              </span>
-                            )}
-                            {team.full.department && (
-                              <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                                {team.full.department}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => onRemoveTeam(team.id)}
-                        className="text-red-600 hover:text-red-800 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 transition-all duration-200 flex items-center gap-1 text-xs sm:text-sm font-medium ml-2"
-                      >
-                        <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
-                        Remove
-                      </button>
-                    </div>
-                    
-                    {team.members && team.members.length > 0 && (
-                      <div className="space-y-3">
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 space-x-0 sm:space-x-3 p-2 sm:p-3 bg-slate-50 rounded-lg">
-                          <span className="font-semibold text-slate-700 text-sm sm:text-base">Team Members:</span>
-                          <div className="flex flex-wrap gap-1 sm:gap-2">
-                            {team.members.map((member, memberIdx) => (
-                              <span
-                                key={`${team.id}-member-${memberIdx}`}
-                                className="bg-blue-100 text-blue-800 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-xs sm:text-sm font-semibold"
-                              >
-                                {member}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+                {panel.teams.map((team) => {
+                  const statusKey = team.markStatus?.status;
+                  const config = teamStatusConfig[statusKey] || {};
+                  const StatusIcon = config.icon || AlertTriangle;
+                  const statusClass = config.className || "bg-slate-100 text-slate-600";
+                  const statusLabel = config.label || "Status Unknown";
 
-                        {/* ✅ FIXED: Display guide faculty info if available */}
-                        {team.full?.guideFaculty && (
-                          <div className="p-2 sm:p-3 bg-green-50 rounded-lg">
-                            <span className="font-semibold text-green-700 text-sm">Guide: </span>
-                            <span className="text-green-800 text-sm">
-                              {typeof team.full.guideFaculty === 'object' 
-                                ? team.full.guideFaculty.name 
-                                : team.full.guideFaculty}
-                            </span>
+                  return (
+                    <div key={team.id} className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex-1 min-w-0">
+                          <h6 className="font-bold text-base sm:text-lg text-slate-800 mb-1">{team.name}</h6>
+                          {team.full && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              {team.full.domain && (
+                                <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
+                                  {team.full.domain}
+                                </span>
+                              )}
+                              {team.full.type && (
+                                <span className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full text-xs font-medium">
+                                  {team.full.type}
+                                </span>
+                              )}
+                              {team.full.school && (
+                                <span className="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+                                  {team.full.school}
+                                </span>
+                              )}
+                              {team.full.department && (
+                                <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+                                  {team.full.department}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {team.markStatus && (
+                          <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs sm:text-sm font-semibold ${statusClass}`}>
+                            <StatusIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                            <span>{statusLabel}</span>
+                            {typeof team.markStatus.studentsFullyMarked === "number" &&
+                              typeof team.markStatus.totalStudents === "number" &&
+                              team.markStatus.totalStudents > 0 && (
+                                <span className="text-[10px] sm:text-xs font-medium">
+                                  {team.markStatus.studentsFullyMarked}/{team.markStatus.totalStudents}
+                                </span>
+                              )}
                           </div>
                         )}
+                        <button
+                          onClick={() => onRemoveTeam(team.id)}
+                          className="text-red-600 hover:text-red-800 p-1.5 sm:p-2 rounded-lg hover:bg-red-50 transition-all duration-200 flex items-center gap-1 text-xs sm:text-sm font-medium ml-2"
+                        >
+                          <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
+                          Remove
+                        </button>
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                      {team.members && team.members.length > 0 && (
+                        <div className="space-y-3">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 space-x-0 sm:space-x-3 p-2 sm:p-3 bg-slate-50 rounded-lg">
+                            <span className="font-semibold text-slate-700 text-sm sm:text-base">Team Members:</span>
+                            <div className="flex flex-wrap gap-1 sm:gap-2">
+                              {team.members.map((member, memberIdx) => (
+                                <span
+                                  key={`${team.id}-member-${memberIdx}`}
+                                  className="bg-blue-100 text-blue-800 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-full text-xs sm:text-sm font-semibold"
+                                >
+                                  {member}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {team.full?.guideFaculty && (
+                            <div className="p-2 sm:p-3 bg-green-50 rounded-lg">
+                              <span className="font-semibold text-green-700 text-sm">Guide: </span>
+                              <span className="text-green-800 text-sm">
+                                {typeof team.full.guideFaculty === "object"
+                                  ? team.full.guideFaculty.name
+                                  : team.full.guideFaculty}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -254,7 +361,7 @@ const PanelCard = ({
                 <select
                   onChange={(e) => {
                     if (e.target.value) {
-                      onManualAssign(index, e.target.value);
+                      onManualAssign(panel.panelId, e.target.value);
                       e.target.value = "";
                     }
                   }}

@@ -34,8 +34,33 @@ import {
   Plus,
   Star,
 } from "lucide-react";
-import * as XLSX from 'xlsx';
-import { saveAs } from 'file-saver';
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
+
+const extractReviewEntries = (reviews) => {
+  if (!reviews) return [];
+  if (reviews instanceof Map) {
+    return Array.from(reviews.values());
+  }
+  if (typeof reviews === "object") {
+    return Object.values(reviews);
+  }
+  return [];
+};
+
+const studentHasPresentAttendance = (student) => {
+  if (!student) return false;
+  return extractReviewEntries(student.reviews).some(
+    (review) => review?.attendance?.value === true
+  );
+};
+
+const projectHasPresentStudent = (project) => {
+  if (!project || !Array.isArray(project.students) || project.students.length === 0) {
+    return false;
+  }
+  return project.students.some(studentHasPresentAttendance);
+};
 
 
 const AdminProjectManagement = () => {
@@ -56,6 +81,7 @@ const DEPARTMENT_OPTIONS = [
   const [selectedSchool, setSelectedSchool] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [bestProjectFilter, setBestProjectFilter] = useState("");
+  const [attendanceFilter, setAttendanceFilter] = useState("");
   
   // UI states
   const [expandedProjects, setExpandedProjects] = useState(new Set());
@@ -367,8 +393,14 @@ const applyFilters = useCallback(async () => {
       }
     }
 
+    if (attendanceFilter === "no-present") {
+      filtered = filtered.filter(project => !projectHasPresentStudent(project));
+    } else if (attendanceFilter === "has-present") {
+      filtered = filtered.filter(project => projectHasPresentStudent(project));
+    }
+
     return filtered;
-  }, [projects, searchQuery, selectedSchool, selectedDepartment, bestProjectFilter]);
+  }, [projects, searchQuery, selectedSchool, selectedDepartment, bestProjectFilter, attendanceFilter]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -377,13 +409,15 @@ const applyFilters = useCallback(async () => {
     const projectsWithPanels = filteredProjects.filter(p => p.panel).length;
     const projectsWithGuides = filteredProjects.filter(p => p.guideFaculty).length;
     const bestProjects = filteredProjects.filter(p => p.bestProject).length;
+    const projectsWithoutPresentStudents = filteredProjects.filter(project => !projectHasPresentStudent(project)).length;
     
     return {
       totalProjects,
       totalStudents,
       projectsWithPanels,
       projectsWithGuides,
-      bestProjects
+      bestProjects,
+      projectsWithoutPresentStudents
     };
   }, [filteredProjects]);
 
@@ -514,6 +548,7 @@ const applyFilters = useCallback(async () => {
           'Panel Assigned': project.panel ? 'Yes' : 'No',
           'Student Count': project.students?.length || 0,
           'Students': project.students?.map(s => `${s.name} (${s.regNo})`).join('; ') || '',
+          'Attendance Status': projectHasPresentStudent(project) ? 'Has Present Student' : 'No Present Students',
         };
 
         // Add panel details if available
@@ -623,7 +658,7 @@ const applyFilters = useCallback(async () => {
 
         {/* Statistics Dashboard */}
         <div className="mx-4 sm:mx-8 mb-6 sm:mb-8">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 sm:gap-6">
             {/* Total Projects */}
             <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-4 sm:p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300">
               <div className="flex items-center justify-between">
@@ -695,6 +730,20 @@ const applyFilters = useCallback(async () => {
                 </div>
                 <div className="bg-white/20 p-2 sm:p-3 rounded-xl">
                   <Star className="h-6 w-6 sm:h-8 sm:w-8" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-rose-500 to-rose-600 rounded-2xl p-4 sm:p-6 text-white shadow-lg transform hover:scale-105 transition-all duration-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-rose-100 text-xs sm:text-sm font-medium">No Present Students</p>
+                  <p className="text-2xl sm:text-3xl font-bold mt-1">
+                    {stats.projectsWithoutPresentStudents.toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-white/20 p-2 sm:p-3 rounded-xl">
+                  <AlertTriangle className="h-6 w-6 sm:h-8 sm:w-8" />
                 </div>
               </div>
             </div>
@@ -794,6 +843,19 @@ const applyFilters = useCallback(async () => {
           <option value="normal">Regular Projects Only</option>
         </select>
       </div>
+
+      <div>
+        <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3">Attendance Filter</label>
+        <select
+          value={attendanceFilter}
+          onChange={(e) => setAttendanceFilter(e.target.value)}
+          className="w-full p-2 sm:p-3 border-2 border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 focus:border-rose-500 transition-all text-sm sm:text-base"
+        >
+          <option value="">All Attendance States</option>
+          <option value="no-present">🚨 No Students Marked Present</option>
+          <option value="has-present">✅ At Least One Student Present</option>
+        </select>
+      </div>
     </div>
 
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-3 sm:space-y-0 space-x-0 sm:space-x-4">
@@ -803,6 +865,7 @@ const applyFilters = useCallback(async () => {
           setSelectedSchool("");
           setSelectedDepartment("");
           setBestProjectFilter("");
+          setAttendanceFilter("");
         }}
         className="flex items-center space-x-2 px-3 sm:px-4 py-2 bg-slate-500 hover:bg-slate-600 text-white rounded-lg font-medium transition-all duration-200 text-sm sm:text-base w-full sm:w-auto"
       >
@@ -869,6 +932,7 @@ const applyFilters = useCallback(async () => {
                 <div className="space-y-4">
                   {filteredProjects.map((project) => {
                     const isExpanded = expandedProjects.has(project._id);
+                    const hasPresentStudent = projectHasPresentStudent(project);
                     
                     return (
                       <div
@@ -919,6 +983,12 @@ const applyFilters = useCallback(async () => {
                               <span className="bg-emerald-100 text-emerald-800 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-semibold flex items-center space-x-1">
                                 <Award className="h-3 w-3 sm:h-4 sm:w-4" />
                                 <span>Panel Assigned</span>
+                              </span>
+                            )}
+                            {!hasPresentStudent && (
+                              <span className="bg-rose-100 text-rose-700 px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-semibold flex items-center space-x-1">
+                                <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span>No Attendance Marked</span>
                               </span>
                             )}
                             <button
